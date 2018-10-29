@@ -1,11 +1,11 @@
 #lang plai
-(print-only-errors)
+;(print-only-errors)
 
 ;; EBNF
 ;;
 ;; <R2WASM> :: <id>
 ;;         | (+ <R2WASM> <R2WASM>)
-;;         | (func (<id>+) <R2WASM>)
+;;         | (func (<param>+) <R2WASM>)
 ;; <id> can be any symbols except + and func
 
 (define-type WASM
@@ -15,7 +15,8 @@
   [func (signature (listof id?)) (body WASM?)])
 
 ;; -----------------------------------------------------------------------------------------------
-;; will need to use this construct in the parser to make sure that signature covers all parameters in the body of a function
+;; TODO: need to potentially fix this and incorporate into interp
+;; e.g., can use this to check that signature covers all parameters in the body of a function
 (define-type Env
   [mtEnv]
   [anEnv (params (listof symbol?))])
@@ -46,7 +47,7 @@
     [(list 'define signature body)
      (func (map parse signature) (parse body))]
     [(list '+ lhs rhs) (add (parse lhs) (parse rhs))]
-    [_ (error 'parse "Something went wrong!")]))
+    [_ (error 'parse "Something went wrong in the parser!")]))
 
 ;; basic type tests
 (test (parse '0) (num 0))
@@ -54,6 +55,7 @@
 (test (parse '(+ 1 2)) (add (num 1) (num 2)))
 
 ;; func test
+(test (parse '(define (identity x) x)) (func (list (id 'identity) (id 'x)) (id 'x) ))
 (test (parse '(define (adder x y) (+ x y))) (func (list (id 'adder) (id 'x) (id 'y)) (add (id 'x) (id 'y))))
 
 ;; exception tests
@@ -63,13 +65,71 @@
 ;; this should give an error in the parser
 (test (parse '(define (x) (+ x y))) (func (list (id 'x)) (add (id 'x) (id 'y))))
 
-;; the ultimate test to reach for
-#;(test (parse '(define (adder x y) (+ x y)))
+(define (interp expr)
+  (local [(define interp (lambda args (error "YOU ARE BAD! Don't call interp. Call helper.")))
+          (define ($string s) (string->symbol (string-append "$" (if (number? s)
+                                                                     (number->string s)
+                                                                     s))))         
+          (define (helper expr stack-pos)
+            (type-case WASM expr
+              ;; handle parameters
+              [id (i)
+                    ;; for now we only take parameters of type i32
+                    `(param ,($string stack-pos) i32)]
+              ;; handle function
+              [func (signature body)
+                    (local [(define func-name (symbol->string (id-name (first signature))))
+                            (define params-num (length (rest signature)))
+                            (define indexed-params (map list (rest signature) (range 0 params-num)))
+                            (define params-lst (map (λ(x) (helper (first x) (first (rest x)))) indexed-params))
+                            ;(define params-symbol (string-join (map ~a params-lst)))
+                            ]
+                      `(module (export ,func-name (func ,($string func-name)))
+                         (func ,($string func-name)
+                               ; deal with params in signature, where parameters index in arg list equals to its position on stack
+                               ,params-lst
+                               ; hardcoded return type
+                               (result i32)
+                               ; interp body
+                               ,(helper-body body (- params-num 1)))))]
+              [else (error "We allow only functions to be transpiled into WASM text format")]))
+
+          (define (helper-body expr stack-pos)
+            (type-case WASM expr
+              ;; for now we only hande addition, but this can be extended
+              [add (lhs rhs)
+                   `(i32.add
+                      ,(helper-body lhs stack-pos)
+                      ,(helper-body rhs (- stack-pos 1)))]
+              ;; handle identifiers in the body of the function differently than parameters
+              [id (i)
+                  ;; need to decrement stack-pos when popping the params from stack
+                   `(get_local ,($string stack-pos))]
+                  ;(flatten (foldr (λ(x acc) (cons `(get_local ,($string x)) acc)) '() (range 0 stack-pos)))]
+              [else (error "Illegal expression in the body of the function")])            
+            )]
+    (helper expr 0)))
+
+;; parser component tests
+
+(test (interp (parse 'x))
+      '(param $0 i32))
+
+(test (interp (parse '(define (identity x) x)))
       '(module
-          (export "add" (func $add))
-        (func $add (param $0 i32) (param $1 i32) (result i32)
+           (export "identity" (func $identity))
+         (func $identity ((param $0 i32)) (result i32)
+               (get_local $0)
+               )))
+
+;; TODO these tests actually should not produce nested parentheses for params. Potentially need to change EBNF to handle signature separately
+;; the ultimate test to reach for
+(test (interp (parse '(define (adder x y) (+ x y))))
+      '(module
+          (export "adder" (func $adder))
+        (func $adder ((param $0 i32) (param $1 i32)) (result i32)
               (i32.add
                (get_local $1)
                (get_local $0)
                ))))
-
+;; TODO add tests for constant function and fix the interpreter
