@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+ 
+<head>
+    <title>WASM adder</title>
+</head>
+ 
+<body>
+    <h1>WASM adder</h1>
+    <br>
+    <input type="number" id="int1" name="int1" value="0" />
+    <input type="number" id="int2" name="int2" value="0" />
+    <input type="button" value="Add!" onclick="add();" />
+    <div id='result'></div>
+ 
+    <script type="text/javascript">
+        var wa_add;
+ 
+        function add() {
+            let int1 = document.getElementById('int1').value;
+            let int2 = document.getElementById('int2').value; 
+            document.getElementById('result').innerText = wa_add(parseInt(int1), parseInt(int2));
+        }
+
+        fetch('add.wasm').then(response =>
+            response.arrayBuffer()
+        ).then(bytes =>
+            WebAssembly.instantiate(bytes)
+        ).then(result => {
+            wa_add = result.instance.exports.add;
+        });
+    </script>
+</body>
+ 
+</html>
