@@ -115,11 +115,12 @@
               [else (error "Illegal expression in the body of the function")]))]
     (helper expr 0)))
 
-;; parser component tests
+;; interpret component tests
 
 (test (interp (parse 'x))
       '(param $0 i32))
 
+;; interpret functions
 (test (interp (parse '(define (identity x) x)))
       '(module
            (export "identity" (func $identity))
@@ -147,3 +148,10 @@
            (export "c-fn" (func $c-fn))
          (func $c-fn (result i32)
                (i32.const 1))))
+
+;; exceptions
+; TODO need to fix this test by incorporating the lookup above, i.e., check if args in the parameter list are exhaustive
+#;(test/exn (interp
+           (parse '(define (x) (+ x y))))
+          "")
+
