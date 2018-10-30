@@ -112,7 +112,6 @@
               [id (i)
                   ;; need to decrement stack-pos when popping the params from stack
                    `(get_local ,($string stack-pos))]
-                  ;(flatten (foldr (λ(x acc) (cons `(get_local ,($string x)) acc)) '() (range 0 stack-pos)))]
               [else (error "Illegal expression in the body of the function")]))]
     (helper expr 0)))
 
