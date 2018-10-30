@@ -6,13 +6,12 @@
 ;; <R2WASM> :: <id>
 ;;         | (+ <R2WASM> <R2WASM>)
 ;;         | (func (<id>+) <R2WASM>)
-;; <id> can be any symbols except + and func
+;; <id> can be any symbols except + and define
 
 (define-type WASM
   [num (n number?)]
   [id (name symbol?)]
   [add (lhs WASM?) (rhs WASM?)]
-  ;; TODO figure out how not to wrap signature in a list and correspond to EBNF
   [func (signature (listof id?)) (body WASM?)])
 
 ;; -----------------------------------------------------------------------------------------------
