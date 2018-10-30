@@ -1,17 +1,18 @@
 #lang plai
-;(print-only-errors)
+(print-only-errors)
 
 ;; EBNF
 ;;
 ;; <R2WASM> :: <id>
 ;;         | (+ <R2WASM> <R2WASM>)
-;;         | (func (<param>+) <R2WASM>)
+;;         | (func (<id>+) <R2WASM>)
 ;; <id> can be any symbols except + and func
 
 (define-type WASM
   [num (n number?)]
   [id (name symbol?)]
   [add (lhs WASM?) (rhs WASM?)]
+  ;; TODO figure out how not to wrap signature in a list and correspond to EBNF
   [func (signature (listof id?)) (body WASM?)])
 
 ;; -----------------------------------------------------------------------------------------------
@@ -45,7 +46,10 @@
     [(? number?) (num sexp)]
     [(? symbol?) (id sexp)]
     [(list 'define signature body)
-     (func (map parse signature) (parse body))]
+     (func (if (list? signature)
+               (map parse signature)
+               (list (parse signature)))
+       (parse body))]
     [(list '+ lhs rhs) (add (parse lhs) (parse rhs))]
     [_ (error 'parse "Something went wrong in the parser!")]))
 
@@ -57,6 +61,8 @@
 ;; func test
 (test (parse '(define (identity x) x)) (func (list (id 'identity) (id 'x)) (id 'x) ))
 (test (parse '(define (adder x y) (+ x y))) (func (list (id 'adder) (id 'x) (id 'y)) (add (id 'x) (id 'y))))
+(test (parse '(define (adder x) (+ x 1))) (func (list (id 'adder) (id 'x)) (add (id 'x) (num 1))))
+(test (parse '(define x 1)) (func (list (id 'x)) (num 1)))
 
 ;; exception tests
 (test/exn (parse '(define)) "")
@@ -81,17 +87,17 @@
                     (local [(define func-name (symbol->string (id-name (first signature))))
                             (define params-num (length (rest signature)))
                             (define indexed-params (map list (rest signature) (range 0 params-num)))
+                            ; deal with params in signature, where parameters index in arg list equals to its position on stack                           
                             (define params-lst (map (λ(x) (helper (first x) (first (rest x)))) indexed-params))
-                            ;(define params-symbol (string-join (map ~a params-lst)))
-                            ]
-                      `(module (export ,func-name (func ,($string func-name)))
-                         (func ,($string func-name)
-                               ; deal with params in signature, where parameters index in arg list equals to its position on stack
-                               ,params-lst
-                               ; hardcoded return type
-                               (result i32)
-                               ; interp body
-                               ,(helper-body body (- params-num 1)))))]
+                            (define export-body (list 'export func-name (list 'func ($string func-name))))
+                            (define func-body (append (list 'func)
+                                                      (list ($string func-name))
+                                                      params-lst
+                                                      ; hardcoded return type
+                                                      (list '(result i32))
+                                                      ; interp body
+                                                      (list (helper-body body (- params-num 1)))))]
+                    (list 'module export-body func-body))]
               [else (error "We allow only functions to be transpiled into WASM text format")]))
 
           (define (helper-body expr stack-pos)
@@ -101,13 +107,14 @@
                    `(i32.add
                       ,(helper-body lhs stack-pos)
                       ,(helper-body rhs (- stack-pos 1)))]
+              [num (v)
+                  `(i32.const ,v)]
               ;; handle identifiers in the body of the function differently than parameters
               [id (i)
                   ;; need to decrement stack-pos when popping the params from stack
                    `(get_local ,($string stack-pos))]
                   ;(flatten (foldr (λ(x acc) (cons `(get_local ,($string x)) acc)) '() (range 0 stack-pos)))]
-              [else (error "Illegal expression in the body of the function")])            
-            )]
+              [else (error "Illegal expression in the body of the function")]))]
     (helper expr 0)))
 
 ;; parser component tests
@@ -118,18 +125,27 @@
 (test (interp (parse '(define (identity x) x)))
       '(module
            (export "identity" (func $identity))
-         (func $identity ((param $0 i32)) (result i32)
-               (get_local $0)
-               )))
+         (func $identity (param $0 i32) (result i32)
+               (get_local $0))))
 
-;; TODO these tests actually should not produce nested parentheses for params. Potentially need to change EBNF to handle signature separately
-;; the ultimate test to reach for
 (test (interp (parse '(define (adder x y) (+ x y))))
       '(module
           (export "adder" (func $adder))
-        (func $adder ((param $0 i32) (param $1 i32)) (result i32)
+        (func $adder (param $0 i32) (param $1 i32) (result i32)
               (i32.add
                (get_local $1)
+               (get_local $0)))))
+
+(test (interp (parse '(define (add1 x) (+ x 1))))
+      '(module
+           (export "add1" (func $add1))
+         (func $add1 (param $0 i32) (result i32)
+               (i32.add
                (get_local $0)
-               ))))
-;; TODO add tests for constant function and fix the interpreter
+               (i32.const 1)))))
+
+(test (interp (parse '(define c-fn 1)))
+      '(module
+           (export "c-fn" (func $c-fn))
+         (func $c-fn (result i32)
+               (i32.const 1))))
