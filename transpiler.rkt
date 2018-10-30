@@ -67,7 +67,7 @@
 (test/exn (parse '(define)) "")
 (test/exn (parse '(define (+ x y))) "")
 
-;; this should give an error in the parser
+;; this should give an error in the interpreter
 (test (parse '(define (x) (+ x y))) (func (list (id 'x)) (add (id 'x) (id 'y))))
 
 (define (interp expr)
