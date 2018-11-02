@@ -3,7 +3,8 @@
 
 ;; EBNF
 ;;
-;; <R2WASM> :: <id>
+;; <R2WASM> :: <num> 
+;;         | <id>
 ;;         | (+ <R2WASM> <R2WASM>)
 ;;         | (func (<id>+) <R2WASM>)
 ;; <id> can be any symbols except + and define
