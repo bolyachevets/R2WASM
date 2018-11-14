@@ -156,3 +156,7 @@
            (parse '(define (x) (+ x y))))
           "")
 
+(define (transpile inname outname)
+  (local [(define filecontent (string->symbol (read-line (open-input-file inname))))]
+  (with-output-to-file outname (lambda () (print (interp (parse filecontent)))))))
+
