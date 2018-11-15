@@ -6,13 +6,19 @@
 ;; <R2WASM> :: <num> 
 ;;         | <id>
 ;;         | (+ <R2WASM> <R2WASM>)
+;;         | (- <R2WASM> <R2WASM)
+;;         | (< <R2WASM> <R2WASM>)
 ;;         | (func (<id>+) <R2WASM>)
-;; <id> can be any symbols except + and define
+;;         | (if <R2WASM> <R2WASM> <R2WASM>)
+;; <id> can be any symbols except +, -, <, if and define
 
 (define-type WASM
   [num (n number?)]
   [id (name symbol?)]
   [add (lhs WASM?) (rhs WASM?)]
+  [sub (lhs WASM?) (rhs WASM?)]
+  [less (lhs WASM?) (rhs WASM?)]
+  [if0 (test-exp WASM?) (then-exp WASM?) (else-exp WASM?)]
   [func (signature (listof id?)) (body WASM?)])
 
 ;; -----------------------------------------------------------------------------------------------
@@ -51,18 +57,25 @@
                (list (parse signature)))
        (parse body))]
     [(list '+ lhs rhs) (add (parse lhs) (parse rhs))]
+    [(list '- lhs rhs) (sub (parse lhs) (parse rhs))]
+    [(list '< lhs rhs) (less (parse lhs) (parse rhs))]
+    [(list 'if c-expr t-expr e-expr)
+     (if0 (parse c-expr) (parse t-expr) (parse e-expr))]
     [_ (error 'parse "Something went wrong in the parser!")]))
 
 ;; basic type tests
 (test (parse '0) (num 0))
 (test (parse 'fib) (id 'fib))
 (test (parse '(+ 1 2)) (add (num 1) (num 2)))
+(test (parse '(- 3 2)) (sub (num 3) (num 2)))
+(test (parse '(if 1 2 3)) (if0 (num 1) (num 2) (num 3)))
 
 ;; func test
 (test (parse '(define (identity x) x)) (func (list (id 'identity) (id 'x)) (id 'x) ))
 (test (parse '(define (adder x y) (+ x y))) (func (list (id 'adder) (id 'x) (id 'y)) (add (id 'x) (id 'y))))
 (test (parse '(define (adder x) (+ x 1))) (func (list (id 'adder) (id 'x)) (add (id 'x) (num 1))))
 (test (parse '(define x 1)) (func (list (id 'x)) (num 1)))
+(test (parse '(define (less-than-zero x) (if (< x 0) 1 0))) (func (list (id 'less-than-zero) (id 'x)) (if0 (less (id 'x) (num 0)) (num 1) (num 0))))
 
 ;; exception tests
 (test/exn (parse '(define)) "")
@@ -90,29 +103,56 @@
                             ; deal with params in signature, where parameters index in arg list equals to its position on stack                           
                             (define params-lst (map (λ(x) (helper (first x) (first (rest x)))) indexed-params))
                             (define export-body (list 'export func-name (list 'func ($string func-name))))
+                            (define-values (interp-body stack) (helper-body body (- params-num 1)))
                             (define func-body (append (list 'func)
                                                       (list ($string func-name))
                                                       params-lst
                                                       ; hardcoded return type
                                                       (list '(result i32))
-                                                      ; interp body
-                                                      (list (helper-body body (- params-num 1)))))]
+                                                      (list interp-body)))]
                     (list 'module export-body func-body))]
               [else (error "We allow only functions to be transpiled into WASM text format")]))
 
           (define (helper-body expr stack-pos)
             (type-case WASM expr
-              ;; for now we only hande addition, but this can be extended
               [add (lhs rhs)
-                   `(i32.add
-                      ,(helper-body lhs stack-pos)
-                      ,(helper-body rhs (- stack-pos 1)))]
+                   (local [(define-values (lhs-wat lhs-pos) (helper-body lhs stack-pos))
+                           (define-values (rhs-wat rhs-pos) (helper-body rhs lhs-pos))] 
+                   (values `(i32.add
+                             ,lhs-wat
+                             ,rhs-wat)
+                           rhs-pos))]
+              [sub (lhs rhs)
+                   (local [(define-values (lhs-wat lhs-pos) (helper-body lhs stack-pos))
+                           (define-values (rhs-wat rhs-pos) (helper-body rhs lhs-pos))] 
+                   (values `(i32.sub
+                             ,lhs-wat
+                             ,rhs-wat)
+                           rhs-pos))]
+              [less (lhs rhs)
+                     (local [(define-values (lhs-wat lhs-pos) (helper-body lhs stack-pos))
+                             (define-values (rhs-wat rhs-pos) (helper-body rhs lhs-pos))] 
+                    (values `(i32.lt_s
+                              ,lhs-wat
+                              ,rhs-wat)
+                            rhs-pos))]
+              [if0 (c-expr t-expr e-expr)
+                   (local [(define-values (t-wat t-pos) (helper-body t-expr stack-pos))
+                           (define-values (e-wat e-pos) (helper-body e-expr t-pos))
+                           (define-values (c-wat c-pos) (helper-body c-expr e-pos))]
+                     ;; select instruction returns its first operand if condition is true, or its second operand otherwise.
+                    (values `(select
+                              ,t-wat
+                              ,e-wat
+                              ,c-wat)
+                            c-pos))]
               [num (v)
-                  `(i32.const ,v)]
-              ;; handle identifiers in the body of the function differently than parameters
+                  (values `(i32.const ,v)
+                          stack-pos)]
               [id (i)
                   ;; need to decrement stack-pos when popping the params from stack
-                   `(get_local ,($string stack-pos))]
+                   (values `(get_local ,($string stack-pos))
+                           (- stack-pos 1))]
               [else (error "Illegal expression in the body of the function")]))]
     (helper expr 0)))
 
@@ -141,14 +181,46 @@
            (export "add1" (func $add1))
          (func $add1 (param $0 i32) (result i32)
                (i32.add
-               (get_local $0)
-               (i32.const 1)))))
+                (get_local $0)
+                (i32.const 1)))))
 
 (test (interp (parse '(define c-fn 1)))
       '(module
            (export "c-fn" (func $c-fn))
          (func $c-fn (result i32)
                (i32.const 1))))
+
+(test (interp (parse '(define (silly-if n) (if (< n 1) 2 3))))
+      '(module
+           (export "silly-if" (func $silly-if))
+         (func $silly-if (param $0 i32) (result i32)
+                (select
+                 (i32.const 2)
+                 (i32.const 3)
+                 (i32.lt_s
+                  (get_local $0)
+                  (i32.const 1)))))
+
+      )
+
+;; need to be careful here as the order of pushing params on stack in signature matters for correct behavior of 'select'
+(test (interp (parse '(define (silly-if2 x w v) (if (< x 1) v w))))
+      '(module
+           (export "silly-if2" (func $silly-if2))
+         (func $silly-if2 (param $0 i32) (param $1 i32) (param $2 i32) (result i32)
+                (select
+                    (get_local $2)
+                    (get_local $1)
+                 (i32.lt_s
+                  (get_local $0)
+                  (i32.const 1)))))
+
+      )
+
+;(define (fib n (a 0) (b 1))
+;  (if (< n 2)
+;      1
+;      (+ a (fib (- n 1) b (+ a b)))))
 
 ;; exceptions
 ; TODO need to fix this test by incorporating the lookup above, i.e., check if args in the parameter list are exhaustive
