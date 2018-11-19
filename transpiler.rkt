@@ -9,8 +9,10 @@
 ;;         | (- <R2WASM> <R2WASM)
 ;;         | (< <R2WASM> <R2WASM>)
 ;;         | (func (<id>+) <R2WASM>)
-;;         | (if <R2WASM> <R2WASM> <R2WASM>)
-;; <id> can be any symbols except +, -, <, if and define
+;;         | (return <R2WASM>)
+;;         | (call <id> <R2WASM>+)
+;;         | (if <R2WASM> <R2WASM> <R2WASM>) ; only have one-branch if
+;; <id> can be any symbols except +, -, <, if, return, call and define
 
 (define-type WASM
   [num (n number?)]
@@ -19,6 +21,8 @@
   [sub (lhs WASM?) (rhs WASM?)]
   [less (lhs WASM?) (rhs WASM?)]
   [if0 (test-exp WASM?) (then-exp WASM?) (else-exp WASM?)]
+  [return (exp WASM?)]
+  [call (f-name id?) (params (listof WASM?))]
   [func (signature (listof id?)) (body WASM?)])
 
 ;; -----------------------------------------------------------------------------------------------
@@ -75,7 +79,7 @@
 (test (parse '(define (adder x y) (+ x y))) (func (list (id 'adder) (id 'x) (id 'y)) (add (id 'x) (id 'y))))
 (test (parse '(define (adder x) (+ x 1))) (func (list (id 'adder) (id 'x)) (add (id 'x) (num 1))))
 (test (parse '(define x 1)) (func (list (id 'x)) (num 1)))
-(test (parse '(define (less-than-zero x) (if (< x 0) 1 0))) (func (list (id 'less-than-zero) (id 'x)) (if0 (less (id 'x) (num 0)) (num 1) (num 0))))
+(test (parse '(define (less-than-zero x) (if (< x 0) 1 2))) (func (list (id 'less-than-zero) (id 'x)) (if0 (less (id 'x) (num 0)) (num 1) (num 2))))
 
 ;; exception tests
 (test/exn (parse '(define)) "")
@@ -137,14 +141,14 @@
                               ,rhs-wat)
                             rhs-pos))]
               [if0 (c-expr t-expr e-expr)
-                   (local [(define-values (t-wat t-pos) (helper-body t-expr stack-pos))
-                           (define-values (e-wat e-pos) (helper-body e-expr t-pos))
-                           (define-values (c-wat c-pos) (helper-body c-expr e-pos))]
+                   (local [(define-values (c-wat c-pos) (helper-body c-expr stack-pos))
+                           (define-values (t-wat t-pos) (helper-body t-expr c-pos))
+                           (define-values (e-wat e-pos) (helper-body e-expr t-pos))]
                      ;; select instruction returns its first operand if condition is true, or its second operand otherwise.
-                    (values `(select
-                              ,t-wat
-                              ,e-wat
-                              ,c-wat)
+                    (values `(if
+                              ,c-wat
+                              (return ,t-wat)
+                              (return ,e-wat))
                             c-pos))]
               [num (v)
                   (values `(i32.const ,v)
@@ -194,34 +198,87 @@
       '(module
            (export "silly-if" (func $silly-if))
          (func $silly-if (param $0 i32) (result i32)
-                (select
-                 (i32.const 2)
-                 (i32.const 3)
+                (if
                  (i32.lt_s
                   (get_local $0)
-                  (i32.const 1)))))
+                  (i32.const 1))
+                 (return i32.const 2)
+                 (return i32.const 3))))
 
       )
 
-;; need to be careful here as the order of pushing params on stack in signature matters for correct behavior of 'select'
-(test (interp (parse '(define (silly-if2 x w v) (if (< x 1) v w))))
-      '(module
-           (export "silly-if2" (func $silly-if2))
-         (func $silly-if2 (param $0 i32) (param $1 i32) (param $2 i32) (result i32)
-                (select
-                    (get_local $2)
-                    (get_local $1)
-                 (i32.lt_s
-                  (get_local $0)
-                  (i32.const 1)))))
 
-      )
 
-;(define (fib n (a 0) (b 1))
-;  (if (< n 2)
-;      1
-;      (+ a (fib (- n 1) b (+ a b)))))
+(define (fib n)
+  (cond
+    [(< n 3) 1]
+    [else (+ (fib (- n 1)) (fib (- n 2)))]))
 
+;; this .wat actually works, i.e. can be compiled to .wasm bytecode
+
+;'(module
+; (export "fib" (func $fib))
+; (func $fib (param $0 i32) (result i32)
+;  (if
+;   (i32.lt_s
+;    (get_local $0)
+;    (i32.const 2)
+;   )
+;   (return
+;    (i32.const 1)
+;   )
+;  )
+;  (return
+;   (i32.add
+;    (call $fib
+;     (i32.sub
+;      (get_local $0)
+;      (i32.const 2)
+;     )
+;    )
+;    (call $fib
+;     (i32.sub
+;      (get_local $0)
+;      (i32.const 1)
+;     )
+;    )
+;   )
+;  )
+; )
+;)
+
+
+;; this .wat makes sense to me, but unfortunately does not get compiled to proper .wasm
+
+;     '(module
+;           (export "fib" (func $fib))
+;         (func $fib (param $0 i32) (result i32)
+;                (select
+;                       (return
+;                        (i32.const 1)
+;                        )
+;                      (return
+;                       (i32.add
+;                        (call $fib
+;                              (i32.sub
+;                               (get_local $0)
+;                               (i32.const 2)
+;                               )
+;                              )
+;                        (call $fib
+;                              (i32.sub
+;                               (get_local $0)
+;                               (i32.const 1)
+;                               )
+;                              )
+;                        )
+;                       )
+;                    (i32.lt_s
+;                     (get_local $0)
+;                     (i32.const 2))))
+;         )
+
+      
 ;; exceptions
 ; TODO need to fix this test by incorporating the lookup above, i.e., check if args in the parameter list are exhaustive
 #;(test/exn (interp
@@ -229,6 +286,9 @@
           "")
 
 (define (transpile inname outname)
-  (local [(define filecontent (string->symbol (read-line (open-input-file inname))))]
-  (with-output-to-file outname (lambda () (print (interp (parse filecontent)))))))
+  (local [(define filecontent (string->symbol (read-line (open-input-file inname))))
+          (define parse-out (parse filecontent))
+          (define interp-out (interp parse-out))]
+    (print parse-out)
+  (with-output-to-file outname (lambda () (print parse-out)))))
 
