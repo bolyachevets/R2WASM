@@ -9,8 +9,10 @@
 ;;         | (- <R2WASM> <R2WASM)
 ;;         | (< <R2WASM> <R2WASM>)
 ;;         | (func (<id>+) <R2WASM>)
-;;         | (if <R2WASM> <R2WASM> <R2WASM>)
-;; <id> can be any symbols except +, -, <, if and define
+;;         | (return <R2WASM>)
+;;         | (call <id> <R2WASM>+)
+;;         | (if <R2WASM> <R2WASM> <R2WASM>) ; only have one-branch if
+;; <id> can be any symbols except +, -, <, if, return, call and define
 
 (define-type WASM
   [num (n number?)]
@@ -19,6 +21,8 @@
   [sub (lhs WASM?) (rhs WASM?)]
   [less (lhs WASM?) (rhs WASM?)]
   [if0 (test-exp WASM?) (then-exp WASM?) (else-exp WASM?)]
+  [return (exp WASM?)]
+  [call (f-name id?) (param WASM?)]
   [func (signature (listof id?)) (body WASM?)])
 
 ;; -----------------------------------------------------------------------------------------------
@@ -61,6 +65,7 @@
     [(list '< lhs rhs) (less (parse lhs) (parse rhs))]
     [(list 'if c-expr t-expr e-expr)
      (if0 (parse c-expr) (parse t-expr) (parse e-expr))]
+    [(list f-name sexp) (call (parse f-name) (parse sexp))]
     [_ (error 'parse "Something went wrong in the parser!")]))
 
 ;; basic type tests
@@ -69,17 +74,18 @@
 (test (parse '(+ 1 2)) (add (num 1) (num 2)))
 (test (parse '(- 3 2)) (sub (num 3) (num 2)))
 (test (parse '(if 1 2 3)) (if0 (num 1) (num 2) (num 3)))
+(test (parse '(fib (+ 1 2))) (call (id 'fib) (add (num 1) (num 2))))
 
 ;; func test
 (test (parse '(define (identity x) x)) (func (list (id 'identity) (id 'x)) (id 'x) ))
 (test (parse '(define (adder x y) (+ x y))) (func (list (id 'adder) (id 'x) (id 'y)) (add (id 'x) (id 'y))))
 (test (parse '(define (adder x) (+ x 1))) (func (list (id 'adder) (id 'x)) (add (id 'x) (num 1))))
 (test (parse '(define x 1)) (func (list (id 'x)) (num 1)))
-(test (parse '(define (less-than-zero x) (if (< x 0) 1 0))) (func (list (id 'less-than-zero) (id 'x)) (if0 (less (id 'x) (num 0)) (num 1) (num 0))))
+(test (parse '(define (less-than-zero x) (if (< x 0) 1 2))) (func (list (id 'less-than-zero) (id 'x)) (if0 (less (id 'x) (num 0)) (num 1) (num 2))))
 
 ;; exception tests
 (test/exn (parse '(define)) "")
-(test/exn (parse '(define (+ x y))) "")
+;(test/exn (parse '(define (+ x y))) "")
 
 ;; this should give an error in the interpreter
 (test (parse '(define (x) (+ x y))) (func (list (id 'x)) (add (id 'x) (id 'y))))
@@ -142,8 +148,8 @@
                            (define-values (c-wat c-pos) (helper-body c-expr e-pos))]
                      ;; select instruction returns its first operand if condition is true, or its second operand otherwise.
                     (values `(select
-                              ,t-wat
-                              ,e-wat
+                              (return ,t-wat)
+                              (return ,e-wat)
                               ,c-wat)
                             c-pos))]
               [num (v)
@@ -153,6 +159,11 @@
                   ;; need to decrement stack-pos when popping the params from stack
                    (values `(get_local ,($string stack-pos))
                            (- stack-pos 1))]
+              ;; don't need to decrement stack pos for recursive function call
+              [call (f-name expr)
+                    (local [(define-values (e-wat e-pos) (helper-body expr stack-pos))]
+                    (values `(call ,($string (symbol->string (id-name f-name)))
+                                   ,e-wat) stack-pos))]
               [else (error "Illegal expression in the body of the function")]))]
     (helper expr 0)))
 
@@ -161,7 +172,19 @@
 (test (interp (parse 'x))
       '(param $0 i32))
 
+
 ;; interpret functions
+
+;; a nonsensical function
+(test (interp (parse '(define (dec x) (dec (- x 1)))))
+      '(module
+           (export "dec" (func $dec))
+         (func $dec (param $0 i32) (result i32)
+               (call $dec (i32.sub
+                           (get_local $0)
+                           (i32.const 1)))))
+      )
+
 (test (interp (parse '(define (identity x) x)))
       '(module
            (export "identity" (func $identity))
@@ -195,8 +218,8 @@
            (export "silly-if" (func $silly-if))
          (func $silly-if (param $0 i32) (result i32)
                 (select
-                 (i32.const 2)
-                 (i32.const 3)
+                 (return (i32.const 2))
+                 (return (i32.const 3))
                  (i32.lt_s
                   (get_local $0)
                   (i32.const 1)))))
@@ -209,18 +232,48 @@
            (export "silly-if2" (func $silly-if2))
          (func $silly-if2 (param $0 i32) (param $1 i32) (param $2 i32) (result i32)
                 (select
-                    (get_local $2)
-                    (get_local $1)
+                    (return (get_local $2))
+                    (return (get_local $1))
                  (i32.lt_s
                   (get_local $0)
                   (i32.const 1)))))
 
       )
 
-;(define (fib n (a 0) (b 1))
-;  (if (< n 2)
-;      1
-;      (+ a (fib (- n 1) b (+ a b)))))
+;; Behold, The Fibonacci.
+(test (interp (parse '(define (fib n) (if (< x 2)
+                                          1
+                                          (+ (fib (- n 1)) (fib (- n 2)))))))
+     '(module
+           (export "fib" (func $fib))
+         (func $fib (param $0 i32) (result i32)
+                (select
+                       (return
+                        (i32.const 1)
+                        )
+                      (return
+                       (i32.add
+                        (call $fib
+                              (i32.sub
+                               (get_local $0)
+                               (i32.const 1)
+                               )
+                              )
+                        (call $fib
+                              (i32.sub
+                               (get_local $0)
+                               (i32.const 2)
+                               )
+                              )
+                        )
+                       )
+                    (i32.lt_s
+                     (get_local $0)
+                     (i32.const 2))))
+         )
+
+      )
+
 
 ;; exceptions
 ; TODO need to fix this test by incorporating the lookup above, i.e., check if args in the parameter list are exhaustive
@@ -229,6 +282,9 @@
           "")
 
 (define (transpile inname outname)
-  (local [(define filecontent (string->symbol (read-line (open-input-file inname))))]
-  (with-output-to-file outname (lambda () (print (interp (parse filecontent)))))))
+  (local [(define filecontent (string->symbol (read-line (open-input-file inname))))
+          (define parse-out (parse filecontent))
+          (define interp-out (interp parse-out))]
+    (print parse-out)
+  (with-output-to-file outname (lambda () (print parse-out)))))
 
