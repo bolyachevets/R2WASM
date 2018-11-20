@@ -281,8 +281,6 @@
            (parse '(define (x) (+ x y))))
           "")
 
-(pretty-print-.-symbol-without-bars true)
-
 (define (transpile inname outname)
   (local [(define filecontent (first (file->list inname)))
           (define parse-out (parse filecontent))
