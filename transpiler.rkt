@@ -281,10 +281,12 @@
            (parse '(define (x) (+ x y))))
           "")
 
+(pretty-print-.-symbol-without-bars true)
+
 (define (transpile inname outname)
-  (local [(define filecontent (string->symbol (read-line (open-input-file inname))))
+  (local [(define filecontent (first (file->list inname)))
           (define parse-out (parse filecontent))
           (define interp-out (interp parse-out))]
-    (print parse-out)
-  (with-output-to-file outname (lambda () (print parse-out)))))
+  (with-output-to-file outname #:exists 'replace
+    (lambda () (display interp-out)))))
 
