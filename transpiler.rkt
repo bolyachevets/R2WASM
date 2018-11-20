@@ -11,7 +11,7 @@
 ;;         | (func (<id>+) <R2WASM>)
 ;;         | (return <R2WASM>)
 ;;         | (call <id> <R2WASM>+)
-;;         | (if <R2WASM> <R2WASM> <R2WASM>) ; only have one-branch if
+;;         | (if <R2WASM> <R2WASM> <R2WASM>)
 ;; <id> can be any symbols except +, -, <, if, return, call and define
 
 (define-type WASM
