@@ -7,6 +7,7 @@
 ;;         | <id>
 ;;         | (+ <R2WASM> <R2WASM>)
 ;;         | (- <R2WASM> <R2WASM)
+;;         | (* <R2WASM> <R2WASM>)
 ;;         | (< <R2WASM> <R2WASM>)
 ;;         | (func (<id>+) <R2WASM>)
 ;;         | (return <R2WASM>)
@@ -19,6 +20,7 @@
   [id (name symbol?)]
   [add (lhs WASM?) (rhs WASM?)]
   [sub (lhs WASM?) (rhs WASM?)]
+  [mult (lhs WASM?) (rhs WASM?)]
   [less (lhs WASM?) (rhs WASM?)]
   [if0 (test-exp WASM?) (then-exp WASM?) (else-exp WASM?)]
   [return (exp WASM?)]
@@ -61,6 +63,7 @@
                (list (parse signature)))
        (parse body))]
     [(list '+ lhs rhs) (add (parse lhs) (parse rhs))]
+    [(list '* lhs rhs) (mult (parse lhs) (parse rhs))]
     [(list '- lhs rhs) (sub (parse lhs) (parse rhs))]
     [(list '< lhs rhs) (less (parse lhs) (parse rhs))]
     [(list 'if c-expr t-expr e-expr)
@@ -135,6 +138,13 @@
                              ,lhs-wat
                              ,rhs-wat)
                            rhs-pos))]
+              [mult (lhs rhs)
+                    (local [(define-values (lhs-wat lhs-pos) (helper-body lhs stack-pos))
+                            (define-values (rhs-wat rhs-pos) (helper-body rhs lhs-pos))] 
+                    (values `(i32.mul
+                             ,lhs-wat
+                             ,rhs-wat)
+                           rhs-pos))]
               [less (lhs rhs)
                      (local [(define-values (lhs-wat lhs-pos) (helper-body lhs stack-pos))
                              (define-values (rhs-wat rhs-pos) (helper-body rhs lhs-pos))] 
@@ -196,6 +206,14 @@
           (export "adder" (func $adder))
         (func $adder (param $0 i32) (param $1 i32) (result i32)
               (i32.add
+               (get_local $1)
+               (get_local $0)))))
+
+(test (interp (parse '(define (multplr x y) (* x y))))
+      '(module
+          (export "multplr" (func $multplr))
+        (func $multplr (param $0 i32) (param $1 i32) (result i32)
+              (i32.mul
                (get_local $1)
                (get_local $0)))))
 
@@ -273,6 +291,41 @@
          )
 
       )
+
+
+;; TODO: need to fix state threading for factorial
+(test (interp (parse '(define (fact n) (if (< n 2)
+                                        1
+                                       (* n (fact (- n 1)))))))
+     '(module (export "fact" (func $fact))
+              (func $fact (param $0 i32) (result i32)
+                    (select
+                     (return (i32.const 1))
+                     (return (i32.mul (get_local $0) (call $fact (i32.sub (get_local $-1) (i32.const 1)))))
+                     (i32.lt_s (get_local $-1) (i32.const 2)))))
+      )
+
+;(module
+;           (export "fib" (func $fib))
+;         (func $fib (param $0 i32) (result i32)
+;                (if (i32.lt_s
+;                     (get_local $0)
+;                     (i32.const 2))
+;                    (return (i32.const 1))
+;                    (else (return (i32.add
+;                     (call $fib
+;                           (i32.sub
+;                            (get_local $0)
+;                            (i32.const 1)))
+;                     (call $fib
+;                           (i32.sub
+;                            (get_local $0)
+;                            (i32.const 2)))
+;                     )))
+;                    end)
+;                    )
+;  )
+
 
 
 ;; exceptions
