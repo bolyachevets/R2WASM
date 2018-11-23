@@ -15,17 +15,17 @@
 ;;         | (if <R2WASM> <R2WASM> <R2WASM>)
 ;; <id> can be any symbols except +, -, <, if, return, call and define
 
-(define-type WASM
+(define-type R2WASM
   [num (n number?)]
   [id (name symbol?)]
-  [add (lhs WASM?) (rhs WASM?)]
-  [sub (lhs WASM?) (rhs WASM?)]
-  [mult (lhs WASM?) (rhs WASM?)]
-  [less (lhs WASM?) (rhs WASM?)]
-  [if0 (test-exp WASM?) (then-exp WASM?) (else-exp WASM?)]
-  [return (exp WASM?)]
-  [call (f-name id?) (param WASM?)]
-  [func (signature (listof id?)) (body WASM?)])
+  [add (lhs R2WASM?) (rhs R2WASM?)]
+  [sub (lhs R2WASM?) (rhs R2WASM?)]
+  [mult (lhs R2WASM?) (rhs R2WASM?)]
+  [less (lhs R2WASM?) (rhs R2WASM?)]
+  [if0 (test-exp R2WASM?) (then-exp R2WASM?) (else-exp R2WASM?)]
+  [return (exp R2WASM?)]
+  [call (f-name id?) (param R2WASM?)]
+  [func (signature (listof id?)) (body R2WASM?)])
 
 ;; -----------------------------------------------------------------------------------------------
 ;; TODO: need to potentially fix this and incorporate into interp
@@ -99,7 +99,7 @@
                                                                      (number->string s)
                                                                      s))))         
           (define (helper expr stack-pos)
-            (type-case WASM expr
+            (type-case R2WASM expr
               ;; handle parameters
               [id (i)
                     ;; for now we only take parameters of type i32
@@ -123,7 +123,7 @@
               [else (error "We allow only functions to be transpiled into WASM text format")]))
 
           (define (helper-body expr stack-pos)
-            (type-case WASM expr
+            (type-case R2WASM expr
               [add (lhs rhs)
                    (local [(define-values (lhs-wat lhs-pos) (helper-body lhs stack-pos))
                            (define-values (rhs-wat rhs-pos) (helper-body rhs lhs-pos))] 
