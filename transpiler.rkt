@@ -27,31 +27,6 @@
   [call (f-name id?) (param WASM?)]
   [func (signature (listof id?)) (body WASM?)])
 
-;; -----------------------------------------------------------------------------------------------
-;; TODO: need to potentially fix this and incorporate into interp
-;; e.g., can use this to check that signature covers all parameters in the body of a function
-(define-type Env
-  [mtEnv]
-  [anEnv (params (listof symbol?))])
-
-;; lookup : symbol? Env? -> Bool?
-;; helper that makes sure that an identifier in the body of the function has been listed in the function's signature
-(define (lookup name env)
-  (type-case Env env
-    [mtEnv () (error 'interp "unbound identifier ~a" name)]
-    [anEnv (params) (any->boolean (member name params))]))
-
-;; any->boolean : any -> boolean
-(define (any->boolean x)
-  (if x
-      #t
-      #f))
-
-;; lookup tests
-(test (lookup 'adder (anEnv (list 'adder 'x 'y))) true)
-(test (lookup 'adder (anEnv (list 'x 'y))) false)
-
-;; -----------------------------------------------------------------------------------------------
 
 (define (parse sexp)
   (match sexp
