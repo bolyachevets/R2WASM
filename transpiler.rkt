@@ -12,7 +12,9 @@
 ;;         | (func (<id>+) <R2WASM>)
 ;;         | (call <id> <R2WASM>+)
 ;;         | (if <R2WASM> <R2WASM> <R2WASM>)
-;; <id> can be any symbols except +, -, <, if, call and define
+;;         | <wastr>
+;;         | (waprint <R2WASM>)
+;; <id> can be any symbols except +, -, <, if, call, print and define
 
 (define-type R2WASM
   [num (n number?)]
@@ -23,7 +25,9 @@
   [less (lhs R2WASM?) (rhs R2WASM?)]
   [if0 (test-exp R2WASM?) (then-exp R2WASM?) (else-exp R2WASM?)]
   [call (f-name id?) (param R2WASM?)]
-  [func (signature (listof id?)) (body R2WASM?)])
+  [func (signature (listof id?)) (body R2WASM?)]
+  [wastr (s string?)]
+  [waprint (str wastr?)])
 
 
 (define (parse sexp)
@@ -41,7 +45,9 @@
     [(list '< lhs rhs) (less (parse lhs) (parse rhs))]
     [(list 'if c-expr t-expr e-expr)
      (if0 (parse c-expr) (parse t-expr) (parse e-expr))]
-    [(list f-name sexp) (call (parse f-name) (parse sexp))]
+    [(list 'print str-exp) (waprint (parse str-exp))]
+    [(list f-name f-exp) (call (parse f-name) (parse f-exp))]
+    [(? string?) (wastr sexp)]
     [_ (error 'parse "Something went wrong in the parser!")]))
 
 ;; basic type tests
@@ -51,6 +57,7 @@
 (test (parse '(- 3 2)) (sub (num 3) (num 2)))
 (test (parse '(if 1 2 3)) (if0 (num 1) (num 2) (num 3)))
 (test (parse '(fib (+ 1 2))) (call (id 'fib) (add (num 1) (num 2))))
+(test (parse "abc") (wastr  "abc"))
 
 ;; func test
 (test (parse '(define (identity x) x)) (func (list (id 'identity) (id 'x)) (id 'x) ))
@@ -58,6 +65,9 @@
 (test (parse '(define (adder x) (+ x 1))) (func (list (id 'adder) (id 'x)) (add (id 'x) (num 1))))
 (test (parse '(define x 1)) (func (list (id 'x)) (num 1)))
 (test (parse '(define (less-than-zero x) (if (< x 0) 1 2))) (func (list (id 'less-than-zero) (id 'x)) (if0 (less (id 'x) (num 0)) (num 1) (num 2))))
+;; treat assignment of string to variable as a function in wasm
+(test (parse '(define x "abc")) (func (list (id 'x)) (wastr "abc")))
+(test (parse '(print "abc")) (waprint (wastr "abc")))
 
 ;; exception tests
 (test/exn (parse '(define)) "")
@@ -91,6 +101,24 @@
                                                       (list '(result i32))
                                                       (list interp-body)))]
                     (list 'module export-body func-body))]
+              ;; handle print statements
+              [waprint (str)
+                     (local [(define wastr-val (helper-body str))
+                             ;; import console.log from js
+                             (define log-import '(import "console" "log" (func $log (param i32 i32))))
+                             ;; import 1 page, i.e., 64KB, of memory created in js
+                             (define mem-import '(import "js" "mem" (memory 1)))
+                             ;; write string to global memory
+                             (define data `(data (i32.const 0) ,wastr-val))
+                             (define func-body (append `(func (export ,(string-append "fun_" wastr-val)))
+                                                       ;; hardcoded offset implies we print a single string only
+                                                       (list 'i32.const 0)
+                                                       ;; string length
+                                                       (list 'i32.const (string-length wastr-val))
+                                                       ;; offset and length are passed to js console.log
+                                                       `(call ,($string "log"))))]
+                       (list 'module log-import mem-import data func-body))]
+
               [else (error "We allow only functions to be transpiled into WASM text format")]))
 
           (define (helper-body expr)
@@ -129,6 +157,7 @@
                          (else ,e-wat)))]
               [num (v) `(i32.const ,v)]
               [id (i) `(get_local ,($string i))]
+              [wastr (str) str]
               [call (f-name expr)
                     (local [(define e-wat (helper-body expr))]
                     (values `(call ,($string (symbol->string (id-name f-name)))
@@ -248,6 +277,16 @@
       )
 
 
+(test (interp (parse '(print "abc")))
+      '(module
+           (import "console" "log" (func $log (param i32 i32)))
+           (import "js" "mem" (memory 1))
+           (data (i32.const 0) "abc")
+         (func (export "fun_abc")
+               i32.const 0
+               i32.const 3
+               call $log))
+)
 
 ;; exceptions
 ; TODO need to fix this test by incorporating the lookup above, i.e., check if args in the parameter list are exhaustive
