@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+ 
+<head>
+    <title>WASM Factorial</title>
+</head>
+ 
+<body>
+    <h1>Factorial</h1>
+    <br>
+    <input type="number" id="n" name="n" value="0" />
+    <input type="button" value="n!" onclick="fact();" />
+    <div id='result'></div>
+ 
+    <script type="text/javascript">
+        var wa_fact;
+ 
+        function fact() {
+            let n = document.getElementById('n').value;
+            document.getElementById('result').innerText = wa_fact(parseInt(n));
+        }
+
+        fetch('fact.wasm').then(response =>
+            response.arrayBuffer()
+        ).then(bytes =>
+            WebAssembly.instantiate(bytes)
+        ).then(result => {
+            wa_fact = result.instance.exports.fact;
+        });
+    </script>
+</body>
+ 
+</html>
