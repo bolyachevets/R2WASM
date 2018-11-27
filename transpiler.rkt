@@ -70,24 +70,22 @@
 
 (define (interp expr)
   (local [(define interp (lambda args (error "YOU ARE BAD! Don't call interp. Call helper.")))
-          (define ($string s) (string->symbol (string-append "$" (if (number? s)
-                                                                     (number->string s)
+          (define ($string s) (string->symbol (string-append "$" (if (symbol? s)
+                                                                     (symbol->string s)
                                                                      s))))         
-          (define (helper expr stack-pos)
+          (define (helper expr)
             (type-case R2WASM expr
               ;; handle parameters
               [id (i)
                     ;; for now we only take parameters of type i32
-                    `(param ,($string stack-pos) i32)]
+                    `(param ,($string i) i32)]
               ;; handle function
               [func (signature body)
                     (local [(define func-name (symbol->string (id-name (first signature))))
-                            (define params-num (length (rest signature)))
-                            (define indexed-params (map list (rest signature) (range 0 params-num)))
-                            ; deal with params in signature, where parameters index in arg list equals to its position on stack                           
-                            (define params-lst (map (λ(x) (helper (first x) (first (rest x)))) indexed-params))
+                            ; deal with params in signature                          
+                            (define params-lst (map (λ(x) (helper x)) (rest signature)))
                             (define export-body (list 'export func-name (list 'func ($string func-name))))
-                            (define-values (interp-body stack) (helper-body body (- params-num 1)))
+                            (define interp-body (helper-body body))
                             (define func-body (append (list 'func)
                                                       (list ($string func-name))
                                                       params-lst
@@ -97,66 +95,53 @@
                     (list 'module export-body func-body))]
               [else (error "We allow only functions to be transpiled into WASM text format")]))
 
-          (define (helper-body expr stack-pos)
+          (define (helper-body expr)
             (type-case R2WASM expr
               [add (lhs rhs)
-                   (local [(define-values (lhs-wat lhs-pos) (helper-body lhs stack-pos))
-                           (define-values (rhs-wat rhs-pos) (helper-body rhs lhs-pos))] 
-                   (values `(i32.add
+                   (local [(define lhs-wat (helper-body lhs))
+                           (define rhs-wat (helper-body rhs))] 
+                   `(i32.add
                              ,lhs-wat
-                             ,rhs-wat)
-                           rhs-pos))]
+                             ,rhs-wat))]
               [sub (lhs rhs)
-                   (local [(define-values (lhs-wat lhs-pos) (helper-body lhs stack-pos))
-                           (define-values (rhs-wat rhs-pos) (helper-body rhs lhs-pos))] 
-                   (values `(i32.sub
+                   (local [(define lhs-wat (helper-body lhs))
+                           (define rhs-wat (helper-body rhs))] 
+                   `(i32.sub
                              ,lhs-wat
-                             ,rhs-wat)
-                           rhs-pos))]
+                             ,rhs-wat))]
               [mult (lhs rhs)
-                    (local [(define-values (lhs-wat lhs-pos) (helper-body lhs stack-pos))
-                            (define-values (rhs-wat rhs-pos) (helper-body rhs lhs-pos))] 
-                    (values `(i32.mul
+                    (local [(define lhs-wat (helper-body lhs))
+                            (define rhs-wat (helper-body rhs))] 
+                    `(i32.mul
                              ,lhs-wat
-                             ,rhs-wat)
-                           rhs-pos))]
+                             ,rhs-wat))]
               [less (lhs rhs)
-                     (local [(define-values (lhs-wat lhs-pos) (helper-body lhs stack-pos))
-                             (define-values (rhs-wat rhs-pos) (helper-body rhs lhs-pos))] 
-                    (values `(i32.lt_s
+                     (local [(define lhs-wat (helper-body lhs))
+                             (define rhs-wat (helper-body rhs))] 
+                    `(i32.lt_s
                               ,lhs-wat
-                              ,rhs-wat)
-                            rhs-pos))]
+                              ,rhs-wat))]
               [if0 (c-expr t-expr e-expr)
-                   (local [(define-values (t-wat t-pos) (helper-body t-expr stack-pos))
-                           (define-values (e-wat e-pos) (helper-body e-expr t-pos))
-                           (define-values (c-wat c-pos) (helper-body c-expr e-pos))]
-                     ;; select instruction returns its first operand if condition is true, or its second operand otherwise.
-                    (values `(select
-                              (return ,t-wat)
-                              (return ,e-wat)
-                              ,c-wat)
-                            c-pos))]
-              [num (v)
-                  (values `(i32.const ,v)
-                          stack-pos)]
-              [id (i)
-                  ;; need to decrement stack-pos when popping the params from stack
-                   (values `(get_local ,($string stack-pos))
-                           (- stack-pos 1))]
-              ;; don't need to decrement stack pos for recursive function call
+                   (local [(define t-wat (helper-body t-expr))
+                           (define e-wat (helper-body e-expr))
+                           (define c-wat (helper-body c-expr))]
+                    `(if (result i32)
+                         ,c-wat
+                         (then ,t-wat)
+                         (else ,e-wat)))]
+              [num (v) `(i32.const ,v)]
+              [id (i) `(get_local ,($string i))]
               [call (f-name expr)
-                    (local [(define-values (e-wat e-pos) (helper-body expr stack-pos))]
+                    (local [(define e-wat (helper-body expr))]
                     (values `(call ,($string (symbol->string (id-name f-name)))
-                                   ,e-wat) stack-pos))]
+                                   ,e-wat)))]
               [else (error "Illegal expression in the body of the function")]))]
-    (helper expr 0)))
+    (helper expr)))
 
-;; interpret component tests
+;; this is not a valid function, just testing id interp
 
 (test (interp (parse 'x))
-      '(param $0 i32))
-
+      '(param $x i32))
 
 ;; interpret functions
 
@@ -164,40 +149,40 @@
 (test (interp (parse '(define (dec x) (dec (- x 1)))))
       '(module
            (export "dec" (func $dec))
-         (func $dec (param $0 i32) (result i32)
+         (func $dec (param $x i32) (result i32)
                (call $dec (i32.sub
-                           (get_local $0)
+                           (get_local $x)
                            (i32.const 1)))))
       )
 
 (test (interp (parse '(define (identity x) x)))
       '(module
            (export "identity" (func $identity))
-         (func $identity (param $0 i32) (result i32)
-               (get_local $0))))
+         (func $identity (param $x i32) (result i32)
+               (get_local $x))))
 
 (test (interp (parse '(define (adder x y) (+ x y))))
       '(module
           (export "adder" (func $adder))
-        (func $adder (param $0 i32) (param $1 i32) (result i32)
+        (func $adder (param $x i32) (param $y i32) (result i32)
               (i32.add
-               (get_local $1)
-               (get_local $0)))))
+               (get_local $x)
+               (get_local $y)))))
 
 (test (interp (parse '(define (multplr x y) (* x y))))
       '(module
           (export "multplr" (func $multplr))
-        (func $multplr (param $0 i32) (param $1 i32) (result i32)
+        (func $multplr (param $x i32) (param $y i32) (result i32)
               (i32.mul
-               (get_local $1)
-               (get_local $0)))))
+               (get_local $x)
+               (get_local $y)))))
 
 (test (interp (parse '(define (add1 x) (+ x 1))))
       '(module
            (export "add1" (func $add1))
-         (func $add1 (param $0 i32) (result i32)
+         (func $add1 (param $x i32) (result i32)
                (i32.add
-                (get_local $0)
+                (get_local $x)
                 (i32.const 1)))))
 
 (test (interp (parse '(define c-fn 1)))
@@ -206,30 +191,28 @@
          (func $c-fn (result i32)
                (i32.const 1))))
 
-(test (interp (parse '(define (silly-if n) (if (< n 1) 2 3))))
+(test (interp (parse '(define (sillyif n) (if (< n 1) 2 3))))
       '(module
-           (export "silly-if" (func $silly-if))
-         (func $silly-if (param $0 i32) (result i32)
-                (select
-                 (return (i32.const 2))
-                 (return (i32.const 3))
-                 (i32.lt_s
-                  (get_local $0)
-                  (i32.const 1)))))
-
+           (export "sillyif" (func $sillyif))
+         (func $sillyif (param $n i32) (result i32)
+               (if (result i32)
+                   (i32.lt_s (get_local $n)
+                             (i32.const 1))
+                   (then (i32.const 2))
+                   (else (i32.const 3))
+                   )))
       )
 
-;; need to be careful here as the order of pushing params on stack in signature matters for correct behavior of 'select'
-(test (interp (parse '(define (silly-if2 x w v) (if (< x 1) v w))))
+(test (interp (parse '(define (sillyif2 x y z) (if (< x 1) y z))))
       '(module
-           (export "silly-if2" (func $silly-if2))
-         (func $silly-if2 (param $0 i32) (param $1 i32) (param $2 i32) (result i32)
-                (select
-                    (return (get_local $2))
-                    (return (get_local $1))
-                 (i32.lt_s
-                  (get_local $0)
-                  (i32.const 1)))))
+           (export "sillyif2" (func $sillyif2))
+         (func $sillyif2 (param $x i32) (param $y i32) (param $z i32) (result i32)
+                (if (result i32)
+                   (i32.lt_s (get_local $x)
+                             (i32.const 1))
+                   (then (get_local $y))
+                   (else (get_local $z))
+                   )))
 
       )
 
@@ -238,68 +221,33 @@
                                           1
                                           (+ (fib (- n 1)) (fib (- n 2)))))))
      '(module
-           (export "fib" (func $fib))
-         (func $fib (param $0 i32) (result i32)
-                (select
-                       (return
-                        (i32.const 1)
-                        )
-                      (return
-                       (i32.add
-                        (call $fib
-                              (i32.sub
-                               (get_local $0)
-                               (i32.const 1)
-                               )
-                              )
-                        (call $fib
-                              (i32.sub
-                               (get_local $0)
-                               (i32.const 2)
-                               )
-                              )
-                        )
-                       )
-                    (i32.lt_s
-                     (get_local $0)
-                     (i32.const 2))))
-         )
+          (export "fib" (func $fib))
+        (func $fib (param $n i32) (result i32)
+              (if (result i32)
+                  (i32.lt_s (get_local $n)
+                            (i32.const 2))
+                  (then (i32.const 1))
+                  (else (i32.add (call $fib (i32.sub (get_local $n)
+                                                     (i32.const 1)))
+                                 (call $fib (i32.sub (get_local $n)
+                                                     (i32.const 2)))))))
+        )
+     )
 
-      )
-
-
-;; TODO: need to fix state threading for factorial
+;; Factorialy Glorianty
 (test (interp (parse '(define (fact n) (if (< n 2)
                                         1
                                        (* n (fact (- n 1)))))))
      '(module (export "fact" (func $fact))
-              (func $fact (param $0 i32) (result i32)
-                    (select
-                     (return (i32.const 1))
-                     (return (i32.mul (get_local $0) (call $fact (i32.sub (get_local $-1) (i32.const 1)))))
-                     (i32.lt_s (get_local $-1) (i32.const 2)))))
+              (func $fact (param $n i32) (result i32)
+                    (if (result i32)
+                        (i32.lt_s (get_local $n)
+                                  (i32.const 2))
+                        (then (i32.const 1))
+                        (else (i32.mul (get_local $n)
+                                       (call $fact (i32.sub (get_local $n)
+                                                            (i32.const 1))))))))
       )
-
-;(module
-;           (export "fib" (func $fib))
-;         (func $fib (param $0 i32) (result i32)
-;                (if (i32.lt_s
-;                     (get_local $0)
-;                     (i32.const 2))
-;                    (return (i32.const 1))
-;                    (else (return (i32.add
-;                     (call $fib
-;                           (i32.sub
-;                            (get_local $0)
-;                            (i32.const 1)))
-;                     (call $fib
-;                           (i32.sub
-;                            (get_local $0)
-;                            (i32.const 2)))
-;                     )))
-;                    end)
-;                    )
-;  )
 
 
 
