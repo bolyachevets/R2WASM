@@ -10,10 +10,9 @@
 ;;         | (* <R2WASM> <R2WASM>)
 ;;         | (< <R2WASM> <R2WASM>)
 ;;         | (func (<id>+) <R2WASM>)
-;;         | (return <R2WASM>)
 ;;         | (call <id> <R2WASM>+)
 ;;         | (if <R2WASM> <R2WASM> <R2WASM>)
-;; <id> can be any symbols except +, -, <, if, return, call and define
+;; <id> can be any symbols except +, -, <, if, call and define
 
 (define-type R2WASM
   [num (n number?)]
@@ -23,7 +22,6 @@
   [mult (lhs R2WASM?) (rhs R2WASM?)]
   [less (lhs R2WASM?) (rhs R2WASM?)]
   [if0 (test-exp R2WASM?) (then-exp R2WASM?) (else-exp R2WASM?)]
-  [return (exp R2WASM?)]
   [call (f-name id?) (param R2WASM?)]
   [func (signature (listof id?)) (body R2WASM?)])
 
