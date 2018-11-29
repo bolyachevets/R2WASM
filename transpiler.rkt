@@ -8,13 +8,15 @@
 ;;         | (+ <R2WASM> <R2WASM>)
 ;;         | (- <R2WASM> <R2WASM)
 ;;         | (* <R2WASM> <R2WASM>)
+;;         | (/ <R2WASM> <R2WASM)
+;;         | (and <R2WASM> <R2WASM>)
 ;;         | (< <R2WASM> <R2WASM>)
 ;;         | (func (<id>+) <R2WASM>)
 ;;         | (call <id> <R2WASM>+)
 ;;         | (if <R2WASM> <R2WASM> <R2WASM>)
 ;;         | <wastr>
 ;;         | (waprint <R2WASM>)
-;; <id> can be any symbols except +, -, <, if, call, print and define
+;; <id> can be any symbols except +, -, /, and, <, if, call, print and define
 
 (define-type R2WASM
   [num (n number?)]
@@ -22,6 +24,8 @@
   [add (lhs R2WASM?) (rhs R2WASM?)]
   [sub (lhs R2WASM?) (rhs R2WASM?)]
   [mult (lhs R2WASM?) (rhs R2WASM?)]
+  [div (lhs R2WASM?) (rhs R2WASM?)]
+  [btand (lhs R2WASM?) (rhs R2WASM?)]
   [less (lhs R2WASM?) (rhs R2WASM?)]
   [if0 (test-exp R2WASM?) (then-exp R2WASM?) (else-exp R2WASM?)]
   [call (f-name id?) (param R2WASM?)]
@@ -43,6 +47,8 @@
     [(list '* lhs rhs) (mult (parse lhs) (parse rhs))]
     [(list '- lhs rhs) (sub (parse lhs) (parse rhs))]
     [(list '< lhs rhs) (less (parse lhs) (parse rhs))]
+    [(list '/ lhs rhs) (div (parse lhs) (parse rhs))]
+    [(list 'and lhs rhs) (btand (parse lhs) (parse rhs))]
     [(list 'if c-expr t-expr e-expr)
      (if0 (parse c-expr) (parse t-expr) (parse e-expr))]
     [(list 'print str-exp) (waprint (parse str-exp))]
@@ -55,6 +61,8 @@
 (test (parse 'fib) (id 'fib))
 (test (parse '(+ 1 2)) (add (num 1) (num 2)))
 (test (parse '(- 3 2)) (sub (num 3) (num 2)))
+(test (parse '(/ 1 2)) (div (num 1) (num 2)))
+(test (parse '(and 3 2)) (btand (num 3) (num 2)))
 (test (parse '(if 1 2 3)) (if0 (num 1) (num 2) (num 3)))
 (test (parse '(fib (+ 1 2))) (call (id 'fib) (add (num 1) (num 2))))
 (test (parse "abc") (wastr  "abc"))
@@ -92,7 +100,9 @@
                     (local [(define func-name (symbol->string (id-name (first signature))))
                             ; deal with params in signature                          
                             (define params-lst (map (λ(x) (helper x)) (rest signature)))
-                            (define export-body (list 'export func-name (list 'func ($string func-name))))
+                            (define export-body (list 'export func-name
+
+                                                      (list 'func ($string func-name))))
                             (define interp-body (helper-body body))
                             (define func-body (append (list 'func)
                                                       (list ($string func-name))
@@ -139,6 +149,18 @@
                     (local [(define lhs-wat (helper-body lhs))
                             (define rhs-wat (helper-body rhs))] 
                     `(i32.mul
+                             ,lhs-wat
+                             ,rhs-wat))]
+              [div (lhs rhs)
+                    (local [(define lhs-wat (helper-body lhs))
+                            (define rhs-wat (helper-body rhs))] 
+                    `(i32.div_s
+                             ,lhs-wat
+                             ,rhs-wat))]
+              [btand (lhs rhs)
+                    (local [(define lhs-wat (helper-body lhs))
+                            (define rhs-wat (helper-body rhs))] 
+                    `(i32.and
                              ,lhs-wat
                              ,rhs-wat))]
               [less (lhs rhs)
